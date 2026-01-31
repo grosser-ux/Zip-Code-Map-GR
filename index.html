@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oregon Territory Boundaries</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+body{
+    margin:0;
+    padding:0;
+    font-family:system-ui,sans-serif;
+}
+#map{
+    width:100%;
+    height:100vh;
+}
+.controls{
+    position:absolute;
+    top:20px;
+    right:20px;
+    background:white;
+    padding:20px;
+    border-radius:12px;
+    box-shadow:0 4px 16px rgba(0,0,0,0.2);
+    z-index:1000;
+    min-width:250px;
+}
+.controls h2{
+    margin:0 0 15px 0;
+    font-size:22px;
+    color:#1f2937;
+}
+.controls p{
+    margin:5px 0 15px 0;
+    color:#6b7280;
+    font-size:14px;
+}
+.btn{
+    width:100%;
+    padding:14px;
+    margin:8px 0;
+    font-size:15px;
+    font-weight:600;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+    transition:all 0.2s;
+}
+.btn:hover{
+    transform:translateY(-2px);
+    box-shadow:0 4px 12px rgba(0,0,0,0.2);
+}
+.btn-blue{background:#3b82f6;color:white}
+.btn-green{background:#10b981;color:white}
+.chk-group{
+    margin:15px 0;
+    padding:15px 0;
+    border-top:1px solid #e5e7eb;
+}
+.chk-item{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    padding:10px;
+    margin:5px 0;
+    background:#f9fafb;
+    border-radius:6px;
+    cursor:pointer;
+}
+.chk-item input{
+    cursor:pointer;
+    width:18px;
+    height:18px;
+}
+.chk-item label{
+    cursor:pointer;
+    font-size:14px;
+    font-weight:500;
+    flex:1;
+}
+.status{
+    background:#fef3c7;
+    padding:10px;
+    border-radius:6px;
+    font-size:13px;
+    color:#92400e;
+    margin:10px 0;
+    display:none;
+}
+.legend{
+    margin-top:15px;
+    padding-top:15px;
+    border-top:1px solid #e5e7eb;
+}
+.legend-title{
+    font-size:13px;
+    font-weight:600;
+    color:#6b7280;
+    margin-bottom:8px;
+}
+.legend-item{
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin:5px 0;
+    font-size:12px;
+    color:#4b5563;
+}
+.legend-line{
+    width:30px;
+    height:3px;
+    border-radius:2px;
+}
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="controls">
+    <h2>🗺️ Territory Lines</h2>
+    <p>Oregon Metro Area</p>
+    
+    <button class="btn btn-blue" onclick="loadZipBoundaries()">Load Zip Code Lines</button>
+    <button class="btn btn-green" onclick="loadCountyBoundaries()">Load County Lines</button>
+    
+    <div class="status" id="status">Loading...</div>
+    
+    <div class="chk-group">
+        <div class="chk-item">
+            <input type="checkbox" id="showZips" onchange="toggleZips()">
+            <label for="showZips">Show Zip Codes</label>
+        </div>
+        <div class="chk-item">
+            <input type="checkbox" id="showCounties" onchange="toggleCounties()">
+            <label for="showCounties">Show Counties</label>
+        </div>
+    </div>
+    
+    <div class="legend">
+        <div class="legend-title">LEGEND</div>
+        <div class="legend-item">
+            <div class="legend-line" style="background:#3b82f6"></div>
+            <span>Zip Code Boundaries</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-line" style="background:#10b981;height:4px"></div>
+            <span>County Boundaries</span>
+        </div>
+    </div>
+</div>
+
+<script>
+let map=null;
+let zipLayer=null;
+let countyLayer=null;
+let zipData={};
+let countyData={};
+let zipsLoaded=false;
+let countiesLoaded=false;
+
+// Zip codes to load
+const targetZips=[
+    '97123','97124', // Hillsboro
+    '97229','97225','97223', // Portland
+    '97005','97006','97008', // Beaverton
+    '97077','97078', // Tigard
+    '97062', // Tualatin
+    '97239','97201','97209' // SW/Downtown Portland
+];
+
+// Counties to load
+const targetCounties=[
+    'Washington County',
+    'Multnomah County',
+    'Clackamas County',
+    'Yamhill County'
+];
+
+// Initialize map
+function initMap(){
+    map=L.map('map').setView([45.5228,-122.9698],10);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+        attribution:'© OpenStreetMap',
+        maxZoom:18
+    }).addTo(map);
+}
+
+// Load zip code boundaries
+async function loadZipBoundaries(){
+    if(zipsLoaded){
+        alert('Zip codes already loaded! Use checkbox to show/hide.');
+        return;
+    }
+    
+    const status=document.getElementById('status');
+    status.style.display='block';
+    
+    let loaded=0;
+    for(let i=0;i<targetZips.length;i++){
+        const zip=targetZips[i];
+        status.textContent=`Loading ZIP ${zip}... (${i+1} of ${targetZips.length})`;
+        
+        try{
+            await new Promise(r=>setTimeout(r,1100));
+            
+            const response=await fetch(
+                `https://nominatim.openstreetmap.org/search?postalcode=${zip}&country=US&state=Oregon&format=json&polygon_geojson=1&limit=1`
+            );
+            const data=await response.json();
+            
+            if(data&&data[0]&&data[0].geojson){
+                zipData[zip]={
+                    geojson:data[0].geojson,
+                    name:data[0].display_name.split(',')[0]
+                };
+                loaded++;
+            }
+        }catch(e){
+            console.error('Error loading',zip,e);
+        }
+    }
+    
+    zipsLoaded=true;
+    status.style.display='none';
+    alert(`✓ Loaded ${loaded} of ${targetZips.length} zip code boundaries! Check the box to display.`);
+    document.getElementById('showZips').checked=true;
+    toggleZips();
+}
+
+// Load county boundaries
+async function loadCountyBoundaries(){
+    if(countiesLoaded){
+        alert('Counties already loaded! Use checkbox to show/hide.');
+        return;
+    }
+    
+    const status=document.getElementById('status');
+    status.style.display='block';
+    
+    let loaded=0;
+    for(let i=0;i<targetCounties.length;i++){
+        const county=targetCounties[i];
+        status.textContent=`Loading ${county}... (${i+1} of ${targetCounties.length})`;
+        
+        try{
+            await new Promise(r=>setTimeout(r,1100));
+            
+            const response=await fetch(
+                `https://nominatim.openstreetmap.org/search?county=${encodeURIComponent(county)}&state=Oregon&country=US&format=json&polygon_geojson=1&limit=1`
+            );
+            const data=await response.json();
+            
+            if(data&&data[0]&&data[0].geojson){
+                countyData[county]={
+                    geojson:data[0].geojson,
+                    name:county
+                };
+                loaded++;
+            }
+        }catch(e){
+            console.error('Error loading',county,e);
+        }
+    }
+    
+    countiesLoaded=true;
+    status.style.display='none';
+    alert(`✓ Loaded ${loaded} of ${targetCounties.length} county boundaries! Check the box to display.`);
+    document.getElementById('showCounties').checked=true;
+    toggleCounties();
+}
+
+// Toggle zip code display
+function toggleZips(){
+    const show=document.getElementById('showZips').checked;
+    
+    if(zipLayer){
+        map.removeLayer(zipLayer);
+        zipLayer=null;
+    }
+    
+    if(show){
+        if(!zipsLoaded){
+            alert('Please click "Load Zip Code Lines" first!');
+            document.getElementById('showZips').checked=false;
+            return;
+        }
+        
+        const features=[];
+        Object.keys(zipData).forEach(zip=>{
+            const data=zipData[zip];
+            const geojson=data.geojson;
+            
+            let coords=[];
+            if(geojson.type==='Polygon'){
+                coords=[geojson.coordinates[0].map(c=>[c[1],c[0]])];
+            }else if(geojson.type==='MultiPolygon'){
+                coords=geojson.coordinates.map(poly=>poly[0].map(c=>[c[1],c[0]]));
+            }
+            
+            if(coords.length>0){
+                const poly=L.polygon(coords,{
+                    color:'#3b82f6',
+                    weight:2,
+                    fillColor:'#3b82f6',
+                    fillOpacity:0.05
+                });
+                
+                poly.bindPopup(`<div style="padding:10px"><h3 style="margin:0 0 5px 0;font-size:16px">ZIP ${zip}</h3><p style="margin:0;color:#666;font-size:13px">${data.name}</p></div>`);
+                features.push(poly);
+            }
+        });
+        
+        if(features.length>0){
+            zipLayer=L.layerGroup(features).addTo(map);
+        }
+    }
+}
+
+// Toggle county display
+function toggleCounties(){
+    const show=document.getElementById('showCounties').checked;
+    
+    if(countyLayer){
+        map.removeLayer(countyLayer);
+        countyLayer=null;
+    }
+    
+    if(show){
+        if(!countiesLoaded){
+            alert('Please click "Load County Lines" first!');
+            document.getElementById('showCounties').checked=false;
+            return;
+        }
+        
+        const features=[];
+        Object.keys(countyData).forEach(county=>{
+            const data=countyData[county];
+            const geojson=data.geojson;
+            
+            let coords=[];
+            if(geojson.type==='Polygon'){
+                coords=[geojson.coordinates[0].map(c=>[c[1],c[0]])];
+            }else if(geojson.type==='MultiPolygon'){
+                coords=geojson.coordinates.map(poly=>poly[0].map(c=>[c[1],c[0]]));
+            }
+            
+            if(coords.length>0){
+                const poly=L.polygon(coords,{
+                    color:'#10b981',
+                    weight:3,
+                    fillColor:'#10b981',
+                    fillOpacity:0.03
+                });
+                
+                poly.bindPopup(`<div style="padding:10px"><h3 style="margin:0 0 5px 0;font-size:16px">${county}</h3><p style="margin:0;color:#666;font-size:13px">Oregon</p></div>`);
+                features.push(poly);
+            }
+        });
+        
+        if(features.length>0){
+            countyLayer=L.layerGroup(features).addTo(map);
+        }
+    }
+}
+
+// Initialize
+initMap();
+</script>
+</body>
+</html>
